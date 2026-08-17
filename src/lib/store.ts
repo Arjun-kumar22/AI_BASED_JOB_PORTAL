@@ -801,9 +801,17 @@ class PortalStore {
   private initialized: boolean = false;
 
   constructor() {
+    // Do NOT load localStorage in constructor — it causes React hydration mismatch.
+    // Server renders with DEFAULT data; if we load localStorage here, the client's
+    // first render would have different data → hydration error.
+    // Instead, defer localStorage hydration to after the first paint.
     if (typeof window !== 'undefined') {
-      this.loadFromLocalStorage();
-      this.initialized = true;
+      // Schedule localStorage load AFTER React hydration completes
+      setTimeout(() => {
+        this.loadFromLocalStorage();
+        this.initialized = true;
+        this.notify(); // Trigger re-render with localStorage data
+      }, 0);
     }
   }
 
