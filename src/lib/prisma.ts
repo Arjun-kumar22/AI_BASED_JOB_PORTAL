@@ -5,26 +5,35 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-// Lazy-initialize Prisma Client so it doesn't crash during `next build`
-// when DATABASE_URL may not be set yet (Vercel build-time vs runtime env vars)
-function getPrismaClient(): PrismaClient {
-  if (!globalForPrisma.prisma) {
-    globalForPrisma.prisma = new PrismaClient({
-      log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+// Only create a real PrismaClient when DATABASE_URL is available.
+// During Vercel `next build`, DATABASE_URL may not be set (it's a runtime env var),
+// so we must guard the instantiation to prevent build crashes.
+function createPrismaClient(): PrismaClient {
+  if (!process.env.DATABASE_URL) {
+    // Return a dummy proxy during build — no DB calls should happen at build time anyway
+    return new Proxy({} as PrismaClient, {
+      get(_target, prop) {
+        // Allow toString / Symbol access for module evaluation
+        if (typeof prop === 'symbol' || prop === 'then') return undefined;
+        // Return an async no-op for any model method access during build
+        return new Proxy(() => {}, {
+          get() {
+            return () => Promise.resolve(null);
+          },
+          apply() {
+            return Promise.resolve(null);
+          },
+        });
+      },
     });
   }
-  return globalForPrisma.prisma;
+
+  return new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
 }
 
-// Export a proxy that only creates the PrismaClient when a property is accessed
-// This prevents the build from failing when DATABASE_URL is not set
-export const prisma = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    const client = getPrismaClient();
-    const value = (client as any)[prop];
-    if (typeof value === 'function') {
-      return value.bind(client);
-    }
-    return value;
-  },
-});
+export const prisma =
+  globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;

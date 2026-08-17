@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 // File Upload API — Deployment-Ready Structure
 // Currently uses local/base64 mode. When CLOUDFLARE_R2 env vars are set,
 // it automatically switches to Cloudflare R2 object storage.
