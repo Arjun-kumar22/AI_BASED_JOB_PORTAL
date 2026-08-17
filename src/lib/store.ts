@@ -781,7 +781,7 @@ const DEFAULT_SALARY_BENCHMARKS: SalaryBenchmark[] = [
   }
 ];
 
-// Reactive Portal Store Singleton
+// Reactive Portal Store Singleton — Database-backed via API routes
 class PortalStore {
   private user: User | null = null;
   private jobs: Job[] = DEFAULT_JOBS;
@@ -801,88 +801,80 @@ class PortalStore {
   private initialized: boolean = false;
 
   constructor() {
-    // Do NOT load localStorage in constructor — it causes React hydration mismatch.
-    // Server renders with DEFAULT data; if we load localStorage here, the client's
-    // first render would have different data → hydration error.
-    // Instead, defer localStorage hydration to after the first paint.
+    // Hydrate from database API after React hydration completes
     if (typeof window !== 'undefined') {
-      // Schedule localStorage load AFTER React hydration completes
-      setTimeout(() => {
-        this.loadFromLocalStorage();
-        this.initialized = true;
-        this.notify(); // Trigger re-render with localStorage data
-      }, 0);
+      setTimeout(() => this.hydrateFromDatabase(), 0);
     }
   }
 
-  private loadFromLocalStorage() {
+  // Fetch real data from database API routes
+  private async hydrateFromDatabase() {
     try {
-      const u = localStorage.getItem('titan_user');
-      if (u) {
-        this.user = JSON.parse(u);
-      } else {
-        this.user = null;
+      // Fetch jobs from database
+      const jobsRes = await fetch('/api/jobs').then(r => r.json()).catch(() => null);
+      if (jobsRes?.status === 'ok' && Array.isArray(jobsRes.data) && jobsRes.data.length > 0) {
+        this.jobs = jobsRes.data.map((j: any) => ({
+          id: j.id,
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          type: j.type || 'Full-time',
+          style: j.style || 'Hybrid',
+          salary: j.salary || 'Competitive',
+          salary_min: 0,
+          salary_max: 0,
+          experience: j.experience || '',
+          seniority: j.seniority || '',
+          status: j.status || 'Active',
+          applicants: j._count?.applications || 0,
+          interviews: 0,
+          closing_date: '',
+          posted_by: j.employer?.name || 'Employer',
+          posted_days_ago: Math.floor((Date.now() - new Date(j.createdAt).getTime()) / 86400000),
+          is_featured: j.isFeatured || false,
+          is_verified_employer: true,
+          department: j.department || '',
+          description: j.description || '',
+          qualifications: j.skills || [],
+          responsibilities: [],
+        }));
       }
 
-      const j = localStorage.getItem('titan_jobs');
-      if (j) this.jobs = JSON.parse(j);
+      // Fetch applications from database
+      const appsRes = await fetch('/api/applications').then(r => r.json()).catch(() => null);
+      if (appsRes?.status === 'ok' && Array.isArray(appsRes.data) && appsRes.data.length > 0) {
+        this.applications = appsRes.data.map((a: any) => ({
+          id: a.id,
+          candidate_id: a.candidateId,
+          candidate_name: a.candidate?.name || 'Candidate',
+          candidate_email: a.candidate?.email || '',
+          candidate_avatar: a.candidate?.image || '/images/candidate-avatar.jpg',
+          job_id: a.jobId,
+          job_title: a.job?.title || 'Position',
+          company: a.job?.company || 'Company',
+          status: a.status?.replace(/_/g, ' ') || 'Applied',
+          applied_date: new Date(a.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          ats_score: 90,
+          star_rating: 0,
+          recruiter_notes: a.notes || '',
+          cover_letter: a.coverLetter || '',
+          resume_version: 'Primary Resume',
+          skills: [],
+          experience_years: '',
+        }));
+      }
 
-      const a = localStorage.getItem('titan_applications');
-      if (a) this.applications = JSON.parse(a);
-
-      const r = localStorage.getItem('titan_resumes');
-      if (r) this.resumes = JSON.parse(r);
-
-      const sj = localStorage.getItem('titan_saved_jobs');
-      if (sj) this.savedJobs = JSON.parse(sj);
-
-      const m = localStorage.getItem('titan_messages');
-      if (m) this.messages = JSON.parse(m);
-
-      const ja = localStorage.getItem('titan_job_alerts');
-      if (ja) this.jobAlerts = JSON.parse(ja);
-
-      const ann = localStorage.getItem('titan_announcements');
-      if (ann) this.announcements = JSON.parse(ann);
-
-      const iv = localStorage.getItem('titan_interviews');
-      if (iv) this.interviews = JSON.parse(iv);
-
-      const al = localStorage.getItem('titan_audit_logs');
-      if (al) this.auditLogs = JSON.parse(al);
-
-      const ff = localStorage.getItem('titan_feature_flags');
-      if (ff) this.featureFlags = JSON.parse(ff);
-
-      const tx = localStorage.getItem('titan_taxonomies');
-      if (tx) this.taxonomies = JSON.parse(tx);
-    } catch (e) {
-      console.warn('Store localStorage load error:', e);
+      this.initialized = true;
+      this.notify();
+    } catch (err) {
+      console.warn('Store database hydration error (falling back to defaults):', err);
+      this.initialized = true;
+      this.notify();
     }
   }
 
-  private saveToLocalStorage() {
-    if (typeof window === 'undefined') return;
-    try {
-      if (this.user) {
-        localStorage.setItem('titan_user', JSON.stringify(this.user));
-      } else {
-        localStorage.removeItem('titan_user');
-      }
-      localStorage.setItem('titan_jobs', JSON.stringify(this.jobs));
-      localStorage.setItem('titan_applications', JSON.stringify(this.applications));
-      localStorage.setItem('titan_resumes', JSON.stringify(this.resumes));
-      localStorage.setItem('titan_saved_jobs', JSON.stringify(this.savedJobs));
-      localStorage.setItem('titan_messages', JSON.stringify(this.messages));
-      localStorage.setItem('titan_job_alerts', JSON.stringify(this.jobAlerts));
-      localStorage.setItem('titan_announcements', JSON.stringify(this.announcements));
-      localStorage.setItem('titan_interviews', JSON.stringify(this.interviews));
-      localStorage.setItem('titan_audit_logs', JSON.stringify(this.auditLogs));
-      localStorage.setItem('titan_feature_flags', JSON.stringify(this.featureFlags));
-      localStorage.setItem('titan_taxonomies', JSON.stringify(this.taxonomies));
-    } catch (e) {
-      console.warn('Store localStorage save error:', e);
-    }
+  // Notify subscribers to re-render (replaces saveToLocalStorage)
+  private persistAndNotify() {
     this.notify();
   }
 
@@ -908,7 +900,7 @@ class PortalStore {
 
   public setUser(user: User | null) {
     this.user = user;
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   public loginRole(role: 'candidate' | 'employer' | 'admin') {
@@ -919,7 +911,7 @@ class PortalStore {
     } else {
       this.user = { ...DEFAULT_USER };
     }
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('User Signed In', `${this.user.name} (${this.user.email})`, this.user.role, 'success');
   }
 
@@ -947,7 +939,7 @@ class PortalStore {
         phone: phone || '+44 7700 900234'
       };
     }
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('User Authenticated', `${this.user.name} logged in (${this.user.role})`, this.user.role, 'success');
   }
 
@@ -978,16 +970,12 @@ class PortalStore {
     };
 
     this.user = userObj;
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Google OAuth Login', `${this.user.name} logged in via Google (${this.user.email})`, this.user.role, 'success');
   }
 
   public logout() {
     this.user = null;
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('titan_user');
-      localStorage.removeItem('titan_token');
-    }
     this.notify();
   }
 
@@ -1012,20 +1000,43 @@ class PortalStore {
       is_verified_employer: true
     };
     this.jobs = [newJob, ...this.jobs];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Job Created', `Created: ${newJob.title} @ ${newJob.company}`, 'Employer', 'success');
+
+    // Async sync to database API
+    if (typeof window !== 'undefined') {
+      fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newJob.title,
+          company: newJob.company,
+          description: newJob.description,
+          location: newJob.location,
+          salary: newJob.salary,
+          type: newJob.type?.toUpperCase().replace('-', '_') || 'FULL_TIME',
+          style: newJob.style?.toUpperCase().replace('-', '_') || 'HYBRID',
+          skills: newJob.qualifications || [],
+          department: newJob.department,
+          seniority: newJob.seniority,
+          experience: newJob.experience,
+          employerId: this.user?.id ? String(this.user.id) : 'default-employer'
+        })
+      }).catch(e => console.warn('Background DB sync (jobs):', e));
+    }
+
     return newJob;
   }
 
   public updateJobStatus(jobId: number | string, status: Job['status']) {
     this.jobs = this.jobs.map(j => String(j.id) === String(jobId) ? { ...j, status } : j);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Job Moderation', `Job ID #${jobId} status set to ${status}`, 'Super Admin', 'info');
   }
 
   public toggleJobFeatured(jobId: number | string) {
     this.jobs = this.jobs.map(j => String(j.id) === String(jobId) ? { ...j, is_featured: !j.is_featured } : j);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   // Applications & Kanban Pipeline
@@ -1064,21 +1075,70 @@ class PortalStore {
       this.jobs = this.jobs.map(j => String(j.id) === String(jobId) ? { ...j, applicants: j.applicants + 1 } : j);
     }
 
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Candidate Applied', `${newApp.candidate_name} applied to ${newApp.job_title}`, 'Candidate', 'success');
+
+    // Async sync to database API
+    if (typeof window !== 'undefined') {
+      fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: String(jobId),
+          candidateId: this.user?.id ? String(this.user.id) : 'default-candidate',
+          coverLetter: newApp.cover_letter,
+          resumeUrl: primaryResume?.filename
+        })
+      }).catch(e => console.warn('Background DB sync (applications):', e));
+    }
+
     return newApp;
   }
 
   public updateApplicationStage(appId: number | string, newStage: KanbanStage) {
     this.applications = this.applications.map(a => String(a.id) === String(appId) ? { ...a, status: newStage } : a);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Kanban Stage Advanced', `Application #${appId} moved to ${newStage}`, 'Employer', 'info');
+
+    // Async sync to database API
+    if (typeof window !== 'undefined') {
+      const stageMap: Record<string, string> = {
+        'Applied': 'APPLIED',
+        'Screening': 'SCREENING',
+        'Technical Interview': 'INTERVIEW_SCHEDULED',
+        'Final Round': 'INTERVIEWED',
+        'Offer Extended': 'OFFER_MADE',
+        'Hired': 'HIRED',
+        'Rejected': 'REJECTED'
+      };
+      fetch('/api/applications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          applicationId: String(appId),
+          status: stageMap[newStage] || newStage.toUpperCase().replace(/\s+/g, '_')
+        })
+      }).catch(e => console.warn('Background DB sync (stage update):', e));
+    }
   }
 
   public updateApplicationScorecard(appId: number | string, rating: number, notes: string) {
     this.applications = this.applications.map(a => String(a.id) === String(appId) ? { ...a, star_rating: rating, recruiter_notes: notes } : a);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Candidate Scorecard Updated', `Application #${appId} rated ${rating} stars`, 'Employer', 'success');
+
+    // Async sync to database API
+    if (typeof window !== 'undefined') {
+      fetch('/api/applications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          applicationId: String(appId),
+          status: 'SCREENING',
+          notes: notes
+        })
+      }).catch(e => console.warn('Background DB sync (scorecard):', e));
+    }
   }
 
   // Resumes
@@ -1097,7 +1157,7 @@ class PortalStore {
     } else {
       this.resumes = [resume, ...this.resumes];
     }
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   public setPrimaryResume(resumeId: number | string) {
@@ -1105,7 +1165,7 @@ class PortalStore {
       ...r,
       is_primary: String(r.id) === String(resumeId)
     }));
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   public duplicateResume(resumeId: number | string): ResumeData | undefined {
@@ -1122,7 +1182,7 @@ class PortalStore {
     };
 
     this.resumes = [copy, ...this.resumes];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     return copy;
   }
 
@@ -1131,7 +1191,7 @@ class PortalStore {
     if (this.resumes.length > 0 && !this.resumes.some(r => r.is_primary)) {
       this.resumes[0].is_primary = true;
     }
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   // Saved Jobs
@@ -1143,7 +1203,7 @@ class PortalStore {
     const existing = this.savedJobs.find(s => String(s.job_id) === String(jobId));
     if (existing) {
       this.savedJobs = this.savedJobs.filter(s => String(s.job_id) !== String(jobId));
-      this.saveToLocalStorage();
+      this.persistAndNotify();
       return false; // Removed
     } else {
       const job = this.getJobById(jobId);
@@ -1159,7 +1219,7 @@ class PortalStore {
           match_score: 92,
           saved_date: 'Just now'
         });
-        this.saveToLocalStorage();
+        this.persistAndNotify();
         return true; // Added
       }
       return false;
@@ -1188,7 +1248,7 @@ class PortalStore {
       attachment
     };
     this.messages = [...this.messages, newMsg];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     return newMsg;
   }
 
@@ -1204,7 +1264,7 @@ class PortalStore {
       status: 'Scheduled'
     };
     this.interviews = [newInterview, ...this.interviews];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Interview Scheduled', `Scheduled with ${newInterview.candidate_name} on ${newInterview.date}`, 'Employer', 'success');
     return newInterview;
   }
@@ -1221,14 +1281,14 @@ class PortalStore {
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     };
     this.announcements = [newAnn, ...this.announcements];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('RAG Announcement Published', `Published: ${newAnn.title}`, 'Super Admin', 'info');
     return newAnn;
   }
 
   public deleteAnnouncement(id: number | string) {
     this.announcements = this.announcements.filter(a => a.id !== id);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   // Audit Logs
@@ -1249,7 +1309,7 @@ class PortalStore {
       details
     };
     this.auditLogs = [log, ...this.auditLogs.slice(0, 49)];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   // Feature Flags & Taxonomies
@@ -1262,7 +1322,7 @@ class PortalStore {
       ...this.featureFlags,
       [flag]: !this.featureFlags[flag]
     };
-    this.saveToLocalStorage();
+    this.persistAndNotify();
     this.addAuditLog('Feature Flag Toggled', `Toggled ${String(flag)} to ${this.featureFlags[flag]}`, 'Super Admin', 'warning');
   }
 
@@ -1280,12 +1340,12 @@ class PortalStore {
       slug
     };
     this.taxonomies = [...this.taxonomies, newTax];
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   public deleteTaxonomy(id: string) {
     this.taxonomies = this.taxonomies.filter(t => t.id !== id);
-    this.saveToLocalStorage();
+    this.persistAndNotify();
   }
 
   // Salary Benchmarks & Locums
