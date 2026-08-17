@@ -1,0 +1,38 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Node modules
+node_modules/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Firebase
+.firebase/
+
+# SQLite Database
+*.db
+
+# OS / IDE generated files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment Variables (NEVER commit these)
+.env.local
+.env
+.env.production
+.env.*.local
+
+# Next.js build output
+.next/
+out/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
